@@ -114,7 +114,7 @@
     .boostbtn .ico { width: 52%; height: 52%; }
   }
 
-  @media (max-width: 600px) {
+@media (max-width: 600px) {
   .boostbtn {
     transform: translateY(8px);
   }
@@ -636,8 +636,9 @@
   // ---------- maps ----------
   // Prices, in points. Points come from your runs and are SPENT when you buy something.
   // The original map is free and always yours.
-  const FOREST_PRICE = 20000;
-  const ROCKY_PRICE = 50000;
+  const FOREST_PRICE = 5000;
+  const ROCKY_PRICE = 6000;
+  const CITY_PRICE = 10000;
 
   // Mix two #rrggbb colours; t is the share of a.
   const mixHex = (a, b, t) => {
@@ -673,6 +674,16 @@
       theme: {
         ink: '#553F8E', deep: '#2A1D52', hill: 'rgba(28,16,64,0.34)', pshadow: 'rgba(24,14,54,0.7)', scrim: 'rgba(38,24,78,0.62)',
         rock: '#A89A8E', rockShade: '#77695F', rockLight: '#D8CCBF', crack: '#4A3F39'
+      }
+    },
+    {
+      id: 'city', name: 'Night City', price: CITY_PRICE, style: 'city',
+      blurb: 'Skyscrapers under city lights.',
+      theme: {
+        ink: '#12143A', deep: '#08091C', hill: 'rgba(40,110,150,0.26)', pshadow: 'rgba(8,9,25,0.74)', scrim: 'rgba(11,12,32,0.64)',
+        skyFar: 'rgba(35,32,90,0.85)', winFar: 'rgba(255,201,102,0.55)',
+        body: '#333A66', bodyShade: '#20244A', bodyLight: '#4E5890',
+        windowLit: '#FFC966', windowCool: '#9FE8FF', antenna: '#C9CFE6', antennaLight: '#FF5C5C'
       }
     }
   ];
@@ -885,9 +896,54 @@
     return { kind: 'rock', outline: Lp.concat(Rp.slice().reverse()), dark, light, cracks, extent };
   }
 
+  function lookTower(w, h, rng) {
+    const R = (a, b) => a + rng() * (b - a);
+    const cx = w / 2;
+    const antennaH = clamp(h * R(0.05, 0.11), 5, 26);
+    const bodyH = h - antennaH;
+    const nSteps = rng() < 0.5 ? 1 : (rng() < 0.7 ? 0 : 2);   // most towers step in once near the top; some are a flat slab; a few step twice
+    const tiers = [];
+    let hw = cx * R(0.86, 1.0), a = 0;
+    for (let k = 0; k <= nSteps; k++) {
+      const isLast = k === nSteps;
+      const b = isLast ? bodyH : Math.min(bodyH, a + bodyH * R(0.3, 0.46));
+      tiers.push({ a, b, hw });
+      hw *= R(0.62, 0.8);
+      a = b;
+      if (a >= bodyH) break;
+    }
+    const antennaHW = clamp(w * 0.018, 1, 2.2);
+    const extent = (t) => {
+      if (t > bodyH) return [cx - antennaHW, cx + antennaHW];
+      for (const q of tiers) if (t >= q.a && t <= q.b) return [cx - q.hw, cx + q.hw];
+      const last = tiers[tiers.length - 1];
+      return [cx - last.hw, cx + last.hw];
+    };
+    // Lit windows: a small grid per tier, decided once here (like the rock's cracks) so painting is just fillRects.
+    const windows = [];
+    for (const q of tiers) {
+      const segH = q.b - q.a;
+      if (segH < 14 || q.hw < 8) continue;
+      const cols = clamp(Math.floor((q.hw * 2 - 6) / 10), 1, 6);
+      const rows = clamp(Math.floor((segH - 6) / 12), 1, 12);
+      const cw = (q.hw * 2 - 6) / cols, rh = (segH - 6) / rows;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (rng() < 0.24) continue;                 // some windows are dark
+          windows.push({
+            x: cx - q.hw + 3 + c * cw + cw * 0.18, y: q.a + 3 + r * rh + rh * 0.18,
+            w: cw * 0.64, h: rh * 0.64, warm: rng() < 0.78
+          });
+        }
+      }
+    }
+    return { kind: 'tower', cx, bodyH, tiers, antennaH, antennaHW, windows, extent };
+  }
+
   const LOOKS = {
     forest: (w, h, rng, kind) => ((kind || (rng() < 0.62 ? 'pine' : 'oak')) === 'pine' ? lookPine(w, h, rng) : lookOak(w, h, rng)),
-    rocky: (w, h, rng) => lookRock(w, h, rng)
+    rocky: (w, h, rng) => lookRock(w, h, rng),
+    city: (w, h, rng) => lookTower(w, h, rng)
   };
 
   // Turn a silhouette into thin slices the collision test can walk through quickly.
@@ -994,7 +1050,27 @@
     }
     g.restore();
   }
-  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock };
+  function paintTower(g, o, P, th, flat) {
+    const L = o.look, cx = L.cx;
+    fillPoly(g, P, [[cx - L.antennaHW, L.bodyH], [cx + L.antennaHW, L.bodyH], [cx + L.antennaHW * 0.4, L.bodyH + L.antennaH], [cx - L.antennaHW * 0.4, L.bodyH + L.antennaH]], flat ? th.shadowSolid : th.antenna);
+    for (const q of L.tiers) {
+      fillPoly(g, P, [[cx - q.hw, q.a], [cx + q.hw, q.a], [cx + q.hw, q.b], [cx - q.hw, q.b]], flat ? th.shadowSolid : th.body);
+      if (!flat) {
+        fillPoly(g, P, [[cx + q.hw * 0.35, q.a], [cx + q.hw, q.a], [cx + q.hw, q.b], [cx + q.hw * 0.35, q.b]], th.bodyShade);
+        fillPoly(g, P, [[cx - q.hw, q.a], [cx - q.hw * 0.82, q.a], [cx - q.hw * 0.82, q.b], [cx - q.hw, q.b]], th.bodyLight);
+      }
+    }
+    if (flat) return;
+    for (const wnd of L.windows) {
+      g.fillStyle = wnd.warm ? th.windowLit : th.windowCool;
+      const a = P(wnd.x, wnd.y), b = P(wnd.x + wnd.w, wnd.y + wnd.h);
+      g.fillRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
+    }
+    const tip = P(cx, L.bodyH + L.antennaH);
+    g.fillStyle = th.antennaLight;
+    g.beginPath(); g.arc(tip[0], tip[1], 1.6, 0, Math.PI * 2); g.fill();
+  }
+  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower };
 
   // Same hard drop shadow the original blocks have, then the shape itself.
   function paintObstacle(g, o, top, bot, th) {
@@ -2188,13 +2264,43 @@
   }
   function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
 
+  // A night skyline in place of the soft hill-blobs the other maps use. Anchored to both walls (like real
+  // buildings), since this game's floor and ceiling are symmetric. Deterministic (no Math.random): the same
+  // pattern scrolls past every time, it does not reshuffle every frame. Plain fillRects only, no clipping or
+  // paths, so this costs less per frame than the 4 blurred hill circles it replaces.
+  function drawSkyline() {
+    const th = T, span = W + 420;
+    for (let i = 0; i < 6; i++) {
+      const seed = i * 71 + 19;
+      const bw = (40 + (seed % 54)) * K;
+      const bh = 46 + ((seed * 7) % Math.max(40, CORR * 0.34));
+      const x = ((((i * span) / 6 - world * 0.05) % span) + span) % span - 210;
+      const fromTop = i % 2 === 0;
+      const y = fromTop ? TOP : BOT - bh;
+      ctx.fillStyle = th.skyFar;
+      ctx.fillRect(x, y, bw, bh);
+      const nWin = 2 + (seed % 3);
+      ctx.fillStyle = th.winFar;
+      for (let k = 0; k < nWin; k++) {
+        const wseed = seed * 13 + k * 29;
+        const wx = x + 5 + (wseed % Math.max(1, bw - 8));
+        const wy = y + 5 + ((wseed * 7) % Math.max(1, bh - 8));
+        ctx.fillRect(wx, wy, 3, 3);
+      }
+    }
+  }
+
   function drawBackdrop() {
-    ctx.fillStyle = T.hill;
-    const span = W + 500;
-    for (let i = 0; i < 4; i++) {
-      const x = ((((i * span) / 4 - world * 0.06) % span) + span) % span - 250;
-      const y = TOP + 60 + ((i * 131) % Math.max(40, CORR - 160));
-      circle(x, y, 110 + ((i * 47) % 60));
+    if (currentMap.style === 'city') {
+      drawSkyline();
+    } else {
+      ctx.fillStyle = T.hill;
+      const span = W + 500;
+      for (let i = 0; i < 4; i++) {
+        const x = ((((i * span) / 4 - world * 0.06) % span) + span) % span - 250;
+        const y = TOP + 60 + ((i * 131) % Math.max(40, CORR - 160));
+        circle(x, y, 110 + ((i * 47) % 60));
+      }
     }
     if (lite) return;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
