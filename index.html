@@ -114,12 +114,6 @@
     .boostbtn .ico { width: 52%; height: 52%; }
   }
 
-@media (max-width: 600px) {
-  .boostbtn {
-    transform: translateY(8px);
-  }
-}
-
   .overlay {
     position: absolute;
     inset: 0;
@@ -637,8 +631,9 @@
   // Prices, in points. Points come from your runs and are SPENT when you buy something.
   // The original map is free and always yours.
   const FOREST_PRICE = 5000;
-  const ROCKY_PRICE = 6000;
-  const CITY_PRICE = 10000;
+  const ROCKY_PRICE = 10000;
+  const CITY_PRICE = 15000;
+  const DAWN_PRICE = 20000;
 
   // Mix two #rrggbb colours; t is the share of a.
   const mixHex = (a, b, t) => {
@@ -677,13 +672,22 @@
       }
     },
     {
-      id: 'city', name: 'Night City', price: CITY_PRICE, style: 'city',
+      id: 'city', name: 'N-City', price: CITY_PRICE, style: 'city',
       blurb: 'Skyscrapers under city lights.',
       theme: {
         ink: '#12143A', deep: '#08091C', hill: 'rgba(40,110,150,0.26)', pshadow: 'rgba(8,9,25,0.74)', scrim: 'rgba(11,12,32,0.64)',
         skyFar: 'rgba(35,32,90,0.85)', winFar: 'rgba(255,201,102,0.55)',
         body: '#333A66', bodyShade: '#20244A', bodyLight: '#4E5890',
         windowLit: '#FFC966', windowCool: '#9FE8FF', antenna: '#C9CFE6', antennaLight: '#FF5C5C'
+      }
+    },
+    {
+      id: 'dawn', name: 'The 7AM', price: DAWN_PRICE, style: 'dawn',
+      blurb: 'Steam pipes at first light.',
+      theme: {
+        ink: '#5B4A52', deep: '#2E2229', hill: 'rgba(255,158,102,0.24)', pshadow: 'rgba(15,10,13,0.72)', scrim: 'rgba(24,17,22,0.64)',
+        pipe: '#B5714A', pipeShade: '#7A4A2E', pipeLight: '#D99B6E',
+        flange: '#4A4640', rivet: '#D8D2C4', steam: '#FFF7EB'
       }
     }
   ];
@@ -940,10 +944,36 @@
     return { kind: 'tower', cx, bodyH, tiers, antennaH, antennaHW, windows, extent };
   }
 
+  function lookPipe(w, h, rng) {
+    const R = (a, b) => a + rng() * (b - a);
+    const cx = w / 2;
+    const pipeHW = clamp(w * R(0.26, 0.36), 7, cx * 0.92);      // the pipe itself stays a near-uniform width (unlike a tapering tree)
+    const flangeHW = clamp(pipeHW * R(1.3, 1.55), pipeHW + 2, cx * 0.94);
+    const flangeH = clamp(h * 0.032, 4, 9);
+    const capH = clamp(h * R(0.06, 0.1), 6, 20);                // a short nozzle cap narrows the very tip, so it can still be skimmed closely
+    const capHW = pipeHW * R(0.5, 0.68);
+    const bodyH = h - capH;
+    const nJoints = clamp(Math.round(bodyH / R(65, 90)), 1, 5);
+    const joints = [];
+    for (let k = 1; k <= nJoints; k++) joints.push(clamp((k / (nJoints + 1)) * bodyH + R(-8, 8), flangeH, bodyH - flangeH));
+    const extent = (t) => {
+      if (t > bodyH) {
+        const f = clamp((t - bodyH) / capH, 0, 1);
+        const hw = lerp(pipeHW, capHW, f);
+        return [cx - hw, cx + hw];
+      }
+      for (const jy of joints) if (t >= jy - flangeH / 2 && t <= jy + flangeH / 2) return [cx - flangeHW, cx + flangeHW];
+      return [cx - pipeHW, cx + pipeHW];
+    };
+    const valveAt = joints.length && rng() < 0.55 ? joints[Math.floor(rng() * joints.length)] : null;
+    return { kind: 'pipe', cx, pipeHW, flangeHW, flangeH, joints, bodyH, capH, capHW, valveAt, extent };
+  }
+
   const LOOKS = {
     forest: (w, h, rng, kind) => ((kind || (rng() < 0.62 ? 'pine' : 'oak')) === 'pine' ? lookPine(w, h, rng) : lookOak(w, h, rng)),
     rocky: (w, h, rng) => lookRock(w, h, rng),
-    city: (w, h, rng) => lookTower(w, h, rng)
+    city: (w, h, rng) => lookTower(w, h, rng),
+    dawn: (w, h, rng) => lookPipe(w, h, rng)
   };
 
   // Turn a silhouette into thin slices the collision test can walk through quickly.
@@ -1070,7 +1100,44 @@
     g.fillStyle = th.antennaLight;
     g.beginPath(); g.arc(tip[0], tip[1], 1.6, 0, Math.PI * 2); g.fill();
   }
-  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower };
+  function paintPipe(g, o, P, th, flat) {
+    const L = o.look, cx = L.cx;
+    fillPoly(g, P, [[cx - L.pipeHW, 0], [cx + L.pipeHW, 0], [cx + L.pipeHW, L.bodyH], [cx - L.pipeHW, L.bodyH]], flat ? th.shadowSolid : th.pipe);
+    if (!flat) {
+      fillPoly(g, P, [[cx + L.pipeHW * 0.3, 0], [cx + L.pipeHW, 0], [cx + L.pipeHW, L.bodyH], [cx + L.pipeHW * 0.3, L.bodyH]], th.pipeShade);
+      fillPoly(g, P, [[cx - L.pipeHW, 0], [cx - L.pipeHW * 0.75, 0], [cx - L.pipeHW * 0.75, L.bodyH], [cx - L.pipeHW, L.bodyH]], th.pipeLight);
+    }
+    fillPoly(g, P, [[cx - L.pipeHW, L.bodyH], [cx + L.pipeHW, L.bodyH], [cx + L.capHW, L.bodyH + L.capH], [cx - L.capHW, L.bodyH + L.capH]], flat ? th.shadowSolid : th.pipeShade);
+    if (flat) return;
+    for (const jy of L.joints) {
+      const y0 = jy - L.flangeH / 2, y1 = jy + L.flangeH / 2;
+      fillPoly(g, P, [[cx - L.flangeHW, y0], [cx + L.flangeHW, y0], [cx + L.flangeHW, y1], [cx - L.flangeHW, y1]], th.flange);
+      g.fillStyle = th.rivet;
+      for (let k = -2; k <= 2; k++) {
+        const rx = cx + k * (L.flangeHW * 0.42);
+        if (Math.abs(rx - cx) > L.flangeHW - 1.5) continue;
+        const q = P(rx, y0 + L.flangeH * 0.22);
+        g.fillRect(q[0] - 1, q[1] - 1, 2, 2);
+      }
+    }
+    if (L.valveAt != null) {
+      const r = Math.min(L.pipeHW * 0.82, 5.5);
+      const c = P(cx, L.valveAt);
+      g.strokeStyle = th.rivet; g.lineWidth = 1.3;
+      g.beginPath(); g.arc(c[0], c[1], r, 0, Math.PI * 2); g.stroke();
+      for (let a = 0; a < 4; a++) {
+        const ang = a * Math.PI / 2 + 0.4;
+        g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(c[0] + Math.cos(ang) * r, c[1] + Math.sin(ang) * r); g.stroke();
+      }
+    }
+    g.fillStyle = th.steam;
+    g.globalAlpha = 0.5;
+    const tip = P(cx, L.bodyH + L.capH * 0.7);
+    g.beginPath(); g.arc(tip[0] - 1.5, tip[1], 2.2, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(tip[0] + 1.5, tip[1] - 1, 1.8, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 1;
+  }
+  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe };
 
   // Same hard drop shadow the original blocks have, then the shape itself.
   function paintObstacle(g, o, top, bot, th) {
