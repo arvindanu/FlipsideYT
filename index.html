@@ -114,12 +114,6 @@
     .boostbtn .ico { width: 52%; height: 52%; }
   }
 
-  @media (max-width: 600px) {
-  .boostbtn {
-    transform: translateY(8px);
-  }
-}
-
   .overlay {
     position: absolute;
     inset: 0;
@@ -380,7 +374,10 @@
     -webkit-tap-highlight-color: transparent;
     transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease, border-color 0.15s ease;
   }
-  #homeMaps { --accent: var(--pink); --accent-soft: rgba(255, 92, 147, 0.2); }
+ #homeMaps {
+  --accent: white;
+  --accent-soft: rgba(255, 255, 255, 0.2);
+}
   #homeSprites { --accent: var(--sun); --accent-soft: rgba(255, 210, 63, 0.2); }
   /* the icon sits in a tinted badge; content-box keeps the glyph at its own size, so the badge grows around it */
   .tile svg {
@@ -467,6 +464,7 @@
   }
   .switch.on { color: var(--deep); background: var(--sun); border-color: var(--sun); }
   .switch:focus-visible { outline: 3px solid var(--blush); outline-offset: 3px; }
+  .switch:disabled { opacity: 0.45; cursor: default; }
 
   @media (max-height: 520px) {
     .homemenu { margin-top: 2px; gap: 8px; }
@@ -571,6 +569,13 @@
           </div>
           <button class="switch on" id="setSound" type="button" role="switch" aria-checked="true" aria-labelledby="setSoundName"><span id="setSoundLbl">On</span></button>
         </div>
+        <div class="setrow">
+          <div class="setinfo">
+            <span class="setname" id="setMusicName">Music</span>
+            <span class="setdesc" id="setMusicDesc">Turn off to keep sound effects only</span>
+          </div>
+          <button class="switch on" id="setMusic" type="button" role="switch" aria-checked="true" aria-labelledby="setMusicName"><span id="setMusicLbl">On</span></button>
+        </div>
       </div>
       <div class="actions">
         <button class="btn alt" id="setBack" type="button">Back</button>
@@ -620,6 +625,7 @@
   const spriteOverlay = $('spriteOverlay'), spriteList = $('spriteList'), spriteTotal = $('spriteTotal');
   const spriteMsg = $('spriteMsg'), spriteBack = $('spriteBack');
   const settingsOverlay = $('settingsOverlay'), setSound = $('setSound'), setSoundLbl = $('setSoundLbl'), setSoundDesc = $('setSoundDesc'), setBack = $('setBack');
+  const setMusic = $('setMusic'), setMusicLbl = $('setMusicLbl'), setMusicDesc = $('setMusicDesc');
 
   const C = { ink: '#2431D6', deep: '#141A7A', pink: '#FF5C93', blush: '#FFE3EC', sun: '#FFD23F' };
   const FONT = '"Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
@@ -668,6 +674,7 @@
   };
   let best = parseInt(store.get('flipside-best') || '0', 10) || 0;
   let soundOn = store.get('flipside-sound') !== 'off';
+  let musicOn = store.get('flipside-music') !== 'off';   // music only; sound effects follow soundOn alone
 
   // ---------- YouTube Playables integration ----------
   // YouTube provides the ad experience. Outside YouTube, these calls are no-ops.
@@ -1639,6 +1646,16 @@
     setSound.classList.toggle('on', soundOn);
     setSoundLbl.textContent = soundOn ? 'On' : 'Off';
     setSoundDesc.textContent = ytInPlayables() && !ytAudioEnabled ? 'Muted by YouTube right now' : 'Music and sound effects';
+    syncMusicUi();
+  }
+
+  // The Music switch follows the Sound switch: with Sound off there is nothing to hear, so it is greyed out.
+  function syncMusicUi() {
+    setMusic.setAttribute('aria-checked', musicOn ? 'true' : 'false');
+    setMusic.classList.toggle('on', musicOn);
+    setMusic.disabled = !soundOn;
+    setMusicLbl.textContent = musicOn ? 'On' : 'Off';
+    setMusicDesc.textContent = soundOn ? 'Turn off to keep sound effects only' : 'Turn Sound on to hear music';
   }
 
   // One switch for the pause menu and the Settings screen.
@@ -1654,6 +1671,23 @@
       else pauseMusic();
     } else {
       pauseMusic();
+    }
+  }
+
+  // Mutes or restores the music only. Sound effects are not touched, so a short blip confirms they still play.
+  function toggleMusic() {
+    if (!soundOn) return;
+    musicOn = !musicOn;
+    store.set('flipside-music', musicOn ? 'on' : 'off');
+    syncMusicUi();
+    if (musicOn) {
+      ensureMusic();
+      beep(520, 780, 0.08, 'square', 0.055);
+      if (state === 'playing') startMusic();
+      else pauseMusic();
+    } else {
+      pauseMusic();
+      beep(780, 520, 0.08, 'square', 0.055);
     }
   }
 
@@ -1693,6 +1727,7 @@
   spriteBack.addEventListener('click', backToHome);
   setBack.addEventListener('click', backToHome);
   setSound.addEventListener('click', toggleSound);
+  setMusic.addEventListener('click', toggleMusic);
 
   initWallet();
 
@@ -1906,7 +1941,7 @@
   }
 
   function startMusic() {
-    if (!soundOn || (ytInPlayables() && !ytAudioEnabled)) return;
+    if (!soundOn || !musicOn || (ytInPlayables() && !ytAudioEnabled)) return;
 
     const a = audio();
     if (a && a.state === 'suspended') {
