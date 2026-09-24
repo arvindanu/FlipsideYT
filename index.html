@@ -1710,10 +1710,10 @@
       '<span class="mapbar"><i></i></span><span class="mapprog"></span>';
     card.innerHTML = kind === 'map'
       ? '<canvas class="mapthumb" width="232" height="136" aria-hidden="true"></canvas>' +
-        '<span class="mapinfo"><span class="maphead"><span class="mapname">' + item.name + '</span><span class="mapstate"></span><span class="mapsel">Selected</span></span>' + tail + '</span>'
+        '<span class="mapinfo"><span class="maphead"><span class="mapname">' + item.name + '</span><span class="mapstate"></span><span class="mapsel">Live</span></span>' + tail + '</span>'
       : '<canvas class="spritethumb" width="176" height="128" aria-hidden="true"></canvas>' +
         '<span class="maphead"><span class="mapname">' + item.name + '</span></span>' +
-        '<span class="maphead"><span class="mapstate"></span><span class="mapsel">Selected</span></span>' + tail;
+        '<span class="maphead"><span class="mapstate"></span><span class="mapsel">live</span></span>' + tail;
     card._r = {
       state: card.querySelector('.mapstate'), need: card.querySelector('.mapneed'), desc: card.querySelector('.mapdesc'),
       bar: card.querySelector('.mapbar'), fill: card.querySelector('.mapbar i'), prog: card.querySelector('.mapprog'), pill: '', label: ''
