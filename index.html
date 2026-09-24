@@ -290,7 +290,7 @@
   }
   @media (max-height: 520px) {
     .mapwrap { width: min(860px, 100%); gap: 8px; }
-    .maplist { flex-direction: row; }
+    .maplist { display: grid; grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); }   /* one row while it fits, then wraps, so cards never squeeze */
     .mapcard { flex: 1; flex-direction: column; align-items: stretch; min-width: 0; text-align: center; padding: 8px; }
     .mapthumb { width: 100%; height: auto; aspect-ratio: 116 / 68; }
     .maphead { justify-content: center; }
@@ -767,6 +767,7 @@
   const CITY_PRICE = 15000;
   const DAWN_PRICE = 20000;
   const LAVA_PRICE = 60000;
+  const GLACIER_PRICE = 80000;
 
   // Mix two #rrggbb colours; t is the share of a.
   const mixHex = (a, b, t) => {
@@ -831,6 +832,15 @@
         crust: '#7A4030', crustShade: '#4A2119', crustLight: '#A65A40',
         lava: '#FF6A1F', lavaHot: '#FFC83D',
         mountFar: 'rgba(16,7,6,0.72)', craterGlow: 'rgba(255,128,48,0.85)', ember: '#FF9A4D'
+      }
+    },
+    {
+      id: 'glacier', name: 'Glaciers', price: GLACIER_PRICE, style: 'ice',
+      blurb: 'Ice spires in drifting snow.',
+      theme: {
+        ink: '#4F7EAC', deep: '#16304F', hill: 'rgba(255,255,255,0.16)', pshadow: 'rgba(12,30,54,0.62)', scrim: 'rgba(16,38,66,0.66)',
+        ice: '#D9F1FF', iceShade: '#8FCBEE', iceLight: '#FFFFFF', iceEdge: '#1F4E7C',
+        snow: '#FFFFFF', peakLight: 'rgba(255,255,255,0.26)', peakShade: 'rgba(214,234,250,0.13)'
       }
     }
   ];
@@ -1173,12 +1183,90 @@
     return { kind: 'lava', slabs, extent };
   }
 
+  // Glaciers: long ice spires, in two families like the forest's pines and oaks. A "crystal" has a straight-sided
+  // shaft that ends in a sharp pyramid; a "cone" tapers all the way up. Each side is a broken line with a few kinks
+  // and small step-ins, so no two spires match. As with the rocks, the silhouette is one solid stretch per row, and
+  // the painting and the collision test both come from it.
+  function lookIce(w, h, rng) {
+    const R = (a, b) => a + rng() * (b - a);
+    const cx = w / 2;
+    const crystal = rng() < 0.5;
+    const lean = R(-0.16, 0.16) * w;                       // how far the tip sits off-centre
+    const shoulder = crystal ? R(0.42, 0.72) : 0;          // where a crystal's straight shaft turns into its tip
+    const q = R(0.95, 1.2);                                // a little over 1 makes the tip needle-sharp
+    const base = cx * R(0.9, 1.0);
+    const ledges = [];
+    const nl = rng() < 0.7 ? (h > 200 ? 2 : 1) : 0;       // the shaft steps in a little at one or two heights
+    for (let i = 0; i < nl; i++) ledges.push({ s: R(0.16, 0.6), f: R(0.8, 0.92) });
+    ledges.sort((a, b) => a.s - b.s);
+    const eps = 1.5 / h;
+    const halfW = (s) => {
+      let hw;
+      if (s <= shoulder) hw = lerp(base, base * 0.88, shoulder ? s / shoulder : 0);
+      else hw = base * (shoulder ? 0.88 : 1) * Math.pow(Math.max(0, 1 - (s - shoulder) / (1 - shoulder)), q);
+      for (const l of ledges) if (s > l.s) hw *= l.f;
+      return hw;
+    };
+    const centre = (s) => cx + lean * Math.pow(s, 1.6);
+    // heights where the outline bends: the base, each step-in (twice, for the little ledge), the shoulder, a few kinks, the tip
+    let stops = [0, 1];
+    for (const l of ledges) stops.push(l.s, l.s + eps);
+    if (crystal) stops.push(shoulder);
+    const nk = clamp(Math.round(h / 110), 1, 4);
+    for (let i = 0; i < nk; i++) stops.push(R(shoulder || 0.1, 0.92));
+    stops.sort((a, b) => a - b);
+    stops = stops.filter((v, i) => i === 0 || v - stops[i - 1] > 0.0005);   // drop bends that land on top of each other
+    const off = R(-0.25, 0.25);                            // the ridge line runs a little off-centre
+    const Lp = [], Rp = [], ridge = [];
+    stops.forEach((sv, j) => {
+      const tip = j === stops.length - 1, first = j === 0;
+      const hl = tip ? 1.2 : halfW(sv) * (first ? R(0.97, 1.0) : R(0.94, 1.05));
+      const hr = tip ? 1.2 : halfW(sv) * (first ? R(0.97, 1.0) : R(0.94, 1.05));
+      const c = centre(sv), t = sv * h;
+      Lp.push([clamp(c - hl, 0, w), t]);
+      Rp.push([clamp(c + hr, 0, w), t]);
+      ridge.push([clamp(c + off * halfW(sv), 0, w), t]);
+    });
+    const at = (P, t) => {
+      if (t <= P[0][1]) return P[0][0];
+      for (let i = 1; i < P.length; i++) {
+        if (t <= P[i][1]) {
+          const a = P[i - 1], b = P[i];
+          return a[0] + (b[0] - a[0]) * ((t - a[1]) / Math.max(1e-6, b[1] - a[1]));
+        }
+      }
+      return P[P.length - 1][0];
+    };
+    const extent = (t) => [at(Lp, t), at(Rp, t)];
+    // facets: a bright strip down the left, a cooler face right of the ridge; plus growth lines, ledge frost and glints
+    const revMap = (A, fn) => A.slice().reverse().map(fn);
+    const light = Lp.concat(revMap(Lp, (pt) => { const j = Lp.indexOf(pt); return [pt[0] + 0.3 * (ridge[j][0] - pt[0]), pt[1]]; }));
+    const dark = ridge.concat(revMap(Rp, (pt) => [pt[0] + 30, pt[1]]));
+    const lines = [];
+    const nlines = h > 90 ? (rng() < 0.5 ? 2 : 3) : 1;
+    for (let i = 0; i < nlines; i++) {
+      const t = R(0.12, 0.7) * h, e = extent(t), rr0 = at(ridge, t);
+      lines.push([[e[0] + 2, t], [rr0 - 2, t + R(4, 10)]]);
+    }
+    const frost = ledges.map((l) => { const t = (l.s + eps) * h, e = extent(t); return [[e[0] + 1, t], [e[1] - 1, t]]; });
+    const glints = [];
+    if (h >= 90) {
+      const ng = rng() < 0.55 ? 1 : 2;
+      for (let i = 0; i < ng; i++) {
+        const t = R(0.2, 0.72) * h, e = extent(t), r = R(3, 5);
+        glints.push({ u: (e[0] + e[1]) / 2 + R(-0.25, 0.25) * (e[1] - e[0]) * 0.5, t, r });
+      }
+    }
+    return { kind: 'ice', outline: Lp.concat(Rp.slice().reverse()), ridge, light, dark, lines, frost, glints, extent };
+  }
+
   const LOOKS = {
     forest: (w, h, rng, kind) => ((kind || (rng() < 0.62 ? 'pine' : 'oak')) === 'pine' ? lookPine(w, h, rng) : lookOak(w, h, rng)),
     rocky: (w, h, rng) => lookRock(w, h, rng),
     city: (w, h, rng) => lookTower(w, h, rng),
     dawn: (w, h, rng) => lookPipe(w, h, rng),
-    lava: (w, h, rng) => lookLava(w, h, rng)
+    lava: (w, h, rng) => lookLava(w, h, rng),
+    ice: (w, h, rng) => lookIce(w, h, rng)
   };
 
   // Turn a silhouette into thin slices the collision test can walk through quickly.
@@ -1377,7 +1465,41 @@
       g.globalAlpha = 1; g.lineWidth = 1.8; g.stroke();
     });
   }
-  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe, lava: paintLava };
+  function paintIce(g, o, P, th, flat) {
+    const L = o.look;
+    fillPoly(g, P, L.outline, flat ? th.shadowSolid : th.ice);
+    if (flat) return;
+    g.save();
+    pathPoly(g, P, L.outline);
+    g.clip();
+    fillPoly(g, P, L.dark, th.iceShade);
+    g.globalAlpha = 0.9;
+    fillPoly(g, P, L.light, th.iceLight);
+    g.globalAlpha = 1;
+    g.lineJoin = 'round';
+    g.lineCap = 'round';
+    const trace = (line) => {
+      g.beginPath();
+      line.forEach((pt, i) => { const q = P(pt[0], pt[1]); if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); });
+    };
+    g.strokeStyle = th.iceLight; g.globalAlpha = 0.75; g.lineWidth = 1.5;   // the ridge between the two faces
+    trace(L.ridge); g.stroke();
+    g.globalAlpha = 0.5; g.lineWidth = 1.2;                                  // growth lines across the left face
+    for (const line of L.lines) { trace(line); g.stroke(); }
+    g.globalAlpha = 0.95; g.lineWidth = 2;                                   // frost along each step-in
+    for (const line of L.frost) { trace(line); g.stroke(); }
+    g.globalAlpha = 1;
+    g.fillStyle = th.iceLight;                                               // a couple of glints
+    for (const s of L.glints) {
+      const r = s.r, k = r * 0.28;
+      fillPoly(g, P, [[s.u, s.t + r], [s.u + k, s.t + k], [s.u + r, s.t], [s.u + k, s.t - k], [s.u, s.t - r], [s.u - k, s.t - k], [s.u - r, s.t], [s.u - k, s.t + k]], th.iceLight);
+    }
+    g.restore();
+    pathPoly(g, P, L.outline);
+    g.strokeStyle = th.iceEdge; g.lineWidth = 2;
+    g.stroke();
+  }
+  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe, lava: paintLava, ice: paintIce };
 
   // Same hard drop shadow the original blocks have, then the shape itself.
   function paintObstacle(g, o, top, bot, th) {
@@ -2683,6 +2805,50 @@
     ctx.globalAlpha = 1;
   }
 
+  // Distant glacier peaks for the Glaciers map: white ridges with a cool shaded face, one row on the ceiling and one
+  // on the floor (the corridor is symmetric, like the skyline). Deterministic, so the same peaks scroll past.
+  function drawPeaks() {
+    const th = T, span = W + 520, wK = Math.max(0.8, K);
+    for (let i = 0; i < 5; i++) {
+      const seed = i * 61 + 17;
+      const bw = (210 + (seed % 100)) * wK;
+      const bh = 80 + ((seed * 5) % Math.max(40, CORR * 0.32));
+      const x = ((((i * span) / 5 - world * 0.05) % span) + span) % span - 260;
+      const d = i % 2 === 0 ? 1 : -1;                  // 1 = hangs from the ceiling, -1 = rises from the floor
+      const y0 = d === 1 ? TOP : BOT, px = x + bw * (0.36 + (seed % 20) / 100), py = y0 + d * bh;
+      ctx.fillStyle = th.peakShade;
+      ctx.beginPath();
+      ctx.moveTo(x, y0); ctx.lineTo(px, py); ctx.lineTo(x + bw, y0);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = th.peakLight;                    // the sunlit face
+      ctx.beginPath();
+      ctx.moveTo(x, y0); ctx.lineTo(px, py); ctx.lineTo(px + bw * 0.1, y0);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // Snow drifting through the corridor: it falls and sways with the clock and slides back with the scroll. Nothing
+  // is random and nothing is allocated per frame; two fills (far flakes, then near ones) draw all of it. Fewer
+  // flakes in low-power mode, and it holds still if the player asked for reduced motion.
+  function drawSnow() {
+    const n = lite ? 16 : 56, span = W + 60;
+    ctx.fillStyle = T.snow;
+    for (let pass = 0; pass < 2; pass++) {
+      ctx.globalAlpha = pass ? 0.95 : 0.6;
+      ctx.beginPath();
+      for (let i = pass; i < n; i += 2) {
+        const r = pass ? 2.5 + (i % 3) * 0.8 : 1.4 + (i % 3) * 0.5;
+        const sway = reduce ? 0 : Math.sin(clock * 0.9 + i) * 9;
+        const x = ((((i * 89) % span) - world * ((pass ? 0.5 : 0.25) + (i % 5) * 0.03) + sway) % span + span) % span - 30;
+        const y = TOP + ((((i * 53) + (reduce ? 0 : clock * (16 + (i % 4) * 7))) % CORR) + CORR) % CORR;
+        ctx.moveTo(x + r, y);
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function drawBackdrop() {
     if (currentMap.style === 'city') {
       drawSkyline();
@@ -2695,7 +2861,9 @@
         circle(x, y, 110 + ((i * 47) % 60));
       }
       if (currentMap.style === 'lava') drawVolcanoes();
+      else if (currentMap.style === 'ice') drawPeaks();
     }
+    if (currentMap.style === 'ice') drawSnow();
     if (lite) return;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     const gs = 44;
