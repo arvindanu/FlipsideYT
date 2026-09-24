@@ -114,12 +114,6 @@
     .boostbtn .ico { width: 52%; height: 52%; }
   }
 
-  @media (max-width: 600px) {
-  .boostbtn {
-    transform: translateY(8px);
-  }
-}
-
   .overlay {
     position: absolute;
     inset: 0;
@@ -270,6 +264,24 @@
   .mapbar i { display: block; height: 100%; background: var(--sun); }
   .mapprog { font-size: 12px; font-weight: 700; opacity: 0.9; }
   .mapmsg { min-height: 1.3em; margin: 0; font-size: 14px; font-weight: 600; text-align: center; }
+  /* A long list of maps: the title, points and buttons stay put and only the maps scroll. This is the mirror of
+     the short-screen breakpoint just below, which keeps its side-by-side row of cards exactly as it was. */
+  @media (min-height: 521px) {
+    #mapOverlay .mapwrap { max-height: 100%; }
+    #mapOverlay .mapwrap > :not(.maplist) { flex-shrink: 0; }
+    #mapOverlay .maplist {
+      flex: 0 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      overflow-anchor: none;
+      touch-action: pan-y;
+      /* room for the cards' offset shadows and focus rings, which the scroll box would otherwise clip */
+      padding: 6px 8px 10px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 227, 236, 0.45) transparent;
+    }
+  }
   @media (max-height: 520px) {
     .mapwrap { width: min(860px, 100%); gap: 8px; }
     .maplist { flex-direction: row; }
@@ -467,6 +479,7 @@
   }
   .switch.on { color: var(--deep); background: var(--sun); border-color: var(--sun); }
   .switch:focus-visible { outline: 3px solid var(--blush); outline-offset: 3px; }
+  .switch:disabled { opacity: 0.45; cursor: default; }
 
   @media (max-height: 520px) {
     .homemenu { margin-top: 2px; gap: 8px; }
@@ -571,6 +584,13 @@
           </div>
           <button class="switch on" id="setSound" type="button" role="switch" aria-checked="true" aria-labelledby="setSoundName"><span id="setSoundLbl">On</span></button>
         </div>
+        <div class="setrow">
+          <div class="setinfo">
+            <span class="setname" id="setMusicName">Music</span>
+            <span class="setdesc" id="setMusicDesc">Turn off to keep sound effects only</span>
+          </div>
+          <button class="switch on" id="setMusic" type="button" role="switch" aria-checked="true" aria-labelledby="setMusicName"><span id="setMusicLbl">On</span></button>
+        </div>
       </div>
       <div class="actions">
         <button class="btn alt" id="setBack" type="button">Back</button>
@@ -620,6 +640,7 @@
   const spriteOverlay = $('spriteOverlay'), spriteList = $('spriteList'), spriteTotal = $('spriteTotal');
   const spriteMsg = $('spriteMsg'), spriteBack = $('spriteBack');
   const settingsOverlay = $('settingsOverlay'), setSound = $('setSound'), setSoundLbl = $('setSoundLbl'), setSoundDesc = $('setSoundDesc'), setBack = $('setBack');
+  const setMusic = $('setMusic'), setMusicLbl = $('setMusicLbl'), setMusicDesc = $('setMusicDesc');
 
   const C = { ink: '#2431D6', deep: '#141A7A', pink: '#FF5C93', blush: '#FFE3EC', sun: '#FFD23F' };
   const FONT = '"Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
@@ -668,6 +689,7 @@
   };
   let best = parseInt(store.get('flipside-best') || '0', 10) || 0;
   let soundOn = store.get('flipside-sound') !== 'off';
+  let musicOn = store.get('flipside-music') !== 'off';   // music only; sound effects follow soundOn alone
 
   // ---------- YouTube Playables integration ----------
   // YouTube provides the ad experience. Outside YouTube, these calls are no-ops.
@@ -738,6 +760,7 @@
   const ROCKY_PRICE = 10000;
   const CITY_PRICE = 15000;
   const DAWN_PRICE = 20000;
+  const LAVA_PRICE = 60000;
 
   // Mix two #rrggbb colours; t is the share of a.
   const mixHex = (a, b, t) => {
@@ -792,6 +815,16 @@
         ink: '#5B4A52', deep: '#2E2229', hill: 'rgba(255,158,102,0.24)', pshadow: 'rgba(15,10,13,0.72)', scrim: 'rgba(24,17,22,0.64)',
         pipe: '#B5714A', pipeShade: '#7A4A2E', pipeLight: '#D99B6E',
         flange: '#4A4640', rivet: '#D8D2C4', steam: '#FFF7EB'
+      }
+    },
+    {
+      id: 'lava', name: 'Magma', price: LAVA_PRICE, style: 'lava',
+      blurb: 'Molten blocks under ash skies.',
+      theme: {
+        ink: '#2A1310', deep: '#120807', hill: 'rgba(255,96,32,0.15)', pshadow: 'rgba(10,4,3,0.75)', scrim: 'rgba(24,9,7,0.66)',
+        crust: '#7A4030', crustShade: '#4A2119', crustLight: '#A65A40',
+        lava: '#FF6A1F', lavaHot: '#FFC83D',
+        mountFar: 'rgba(16,7,6,0.72)', craterGlow: 'rgba(255,128,48,0.85)', ember: '#FF9A4D'
       }
     }
   ];
@@ -1073,11 +1106,73 @@
     return { kind: 'pipe', cx, pipeHW, flangeHW, flangeH, joints, bodyH, capH, capHW, valveAt, extent };
   }
 
+  // Magma: a stack of chunky lava blocks, each one skewed a little and nudged sideways, so no two obstacles match.
+  // Every block is a convex quad and the silhouette is their union, so the painting and the collision test agree.
+  function polyExtent(pts, t) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      if ((a[1] <= t && t <= b[1]) || (b[1] <= t && t <= a[1])) {
+        const dt = b[1] - a[1];
+        if (dt === 0) { lo = Math.min(lo, a[0], b[0]); hi = Math.max(hi, a[0], b[0]); continue; }
+        const u = a[0] + (b[0] - a[0]) * ((t - a[1]) / dt);
+        if (u < lo) lo = u;
+        if (u > hi) hi = u;
+      }
+    }
+    return lo <= hi ? [lo, hi] : null;
+  }
+
+  function lookLava(w, h, rng) {
+    const R = (a, b) => a + rng() * (b - a);
+    const cx = w / 2;
+    const n = clamp(Math.round(h / 72), 2, 6);
+    const cuts = [0];
+    for (let k = 1; k < n; k++) cuts.push(((k + R(-0.3, 0.3)) / n) * h);
+    cuts.push(h);
+    const slabs = [];
+    for (let k = 0; k < n; k++) {
+      const last = k === n - 1;
+      const a = cuts[k];
+      const b = last ? h : cuts[k + 1] + R(8, 16);               // reaches a little into the next block, so the stack has no gaps
+      const f = n > 1 ? k / (n - 1) : 0;
+      const hwB = Math.max(6, cx * R(0.78, 1.0) * (1 - 0.3 * f));  // blocks get a bit narrower towards the tip
+      const hwT = hwB * R(0.8, 1.0);
+      const c = clamp(cx + R(-0.16, 0.16) * w, hwB, w - hwB);
+      const drop = last ? R(6, Math.min(30, (b - a) * 0.35)) : R(0, 9);   // one top corner sits lower, so the top is slanted
+      const lean = rng() < 0.5;
+      const dL = lean ? drop : 0, dR = lean ? 0 : drop;
+      const pts = [[c - hwB, a], [c + hwB, a], [c + hwT, b - dR], [c - hwT, b - dL]];
+      // glowing cracks, decided once here so painting is only lines
+      const cracks = [];
+      if (b - a >= 30) {
+        const nc = rng() < 0.5 ? 1 : 2;
+        for (let i = 0; i < nc; i++) {
+          let u = c + R(-0.5, 0.5) * hwT, t = b - drop - R(3, Math.min(16, (b - a) * 0.3));
+          const line = [[u, t]];
+          for (let q = 0; q < 3; q++) { u += R(-6, 6); t -= R(6, 14); line.push([u, Math.max(a + 2, t)]); }
+          cracks.push(line);
+        }
+      }
+      slabs.push({ pts, c, hwB, hwT, a, b, dL, dR, cracks });
+    }
+    const extent = (t) => {
+      let lo = Infinity, hi = -Infinity;
+      for (const sl of slabs) {
+        const e = polyExtent(sl.pts, t);
+        if (e) { if (e[0] < lo) lo = e[0]; if (e[1] > hi) hi = e[1]; }
+      }
+      return lo <= hi ? [lo, hi] : [cx, cx];
+    };
+    return { kind: 'lava', slabs, extent };
+  }
+
   const LOOKS = {
     forest: (w, h, rng, kind) => ((kind || (rng() < 0.62 ? 'pine' : 'oak')) === 'pine' ? lookPine(w, h, rng) : lookOak(w, h, rng)),
     rocky: (w, h, rng) => lookRock(w, h, rng),
     city: (w, h, rng) => lookTower(w, h, rng),
-    dawn: (w, h, rng) => lookPipe(w, h, rng)
+    dawn: (w, h, rng) => lookPipe(w, h, rng),
+    lava: (w, h, rng) => lookLava(w, h, rng)
   };
 
   // Turn a silhouette into thin slices the collision test can walk through quickly.
@@ -1241,7 +1336,42 @@
     g.beginPath(); g.arc(tip[0] + 1.5, tip[1] - 1, 1.8, 0, Math.PI * 2); g.fill();
     g.globalAlpha = 1;
   }
-  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe };
+  function paintLava(g, o, P, th, flat) {
+    const L = o.look;
+    if (flat) { for (const sl of L.slabs) fillPoly(g, P, sl.pts, th.shadowSolid); return; }
+    const trace = (line) => {
+      g.beginPath();
+      line.forEach((pt, i) => { const q = P(pt[0], pt[1]); if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); });
+    };
+    g.lineJoin = 'round';
+    g.lineCap = 'round';
+    L.slabs.forEach((sl, k) => {
+      const { c, hwB, hwT, a, b } = sl;
+      fillPoly(g, P, sl.pts, th.crust);
+      g.save();
+      pathPoly(g, P, sl.pts);
+      g.clip();
+      fillPoly(g, P, [[c + hwB * 0.3, a - 4], [c + hwB + 30, a - 4], [c + hwT + 30, b + 4], [c + hwT * 0.3, b + 4]], th.crustShade);
+      g.globalAlpha = 0.6;
+      fillPoly(g, P, [[c - hwB - 30, a - 4], [c - hwB * 0.7, a - 4], [c - hwT * 0.7, b + 4], [c - hwT - 30, b + 4]], th.crustLight);
+      g.globalAlpha = 1;
+      for (const line of sl.cracks) {
+        trace(line); g.strokeStyle = th.lava; g.lineWidth = 2.6; g.stroke();
+        trace(line); g.strokeStyle = th.lavaHot; g.lineWidth = 1; g.stroke();
+      }
+      if (k === L.slabs.length - 1) {                  // the tip is molten: a hot band along the top edge
+        const capH = clamp((b - a) * 0.3, 8, 24), tl = b - sl.dL, tr = b - sl.dR, ex = hwB + 30;
+        fillPoly(g, P, [[c - ex, tl + 3], [c + ex, tr + 3], [c + ex, tr - capH], [c - ex, tl - capH]], th.lava);
+        fillPoly(g, P, [[c - ex, tl + 3], [c + ex, tr + 3], [c + ex, tr - capH * 0.4], [c - ex, tl - capH * 0.4]], th.lavaHot);
+      }
+      g.restore();
+      // a glowing seam around every block
+      pathPoly(g, P, sl.pts);
+      g.globalAlpha = 0.3; g.strokeStyle = th.lava; g.lineWidth = 5; g.stroke();
+      g.globalAlpha = 1; g.lineWidth = 1.8; g.stroke();
+    });
+  }
+  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe, lava: paintLava };
 
   // Same hard drop shadow the original blocks have, then the shape itself.
   function paintObstacle(g, o, top, bot, th) {
@@ -1412,6 +1542,22 @@
     buildMapCards();
     overlay.hidden = true;
     mapOverlay.hidden = false;
+    scrollPickedIntoView();
+  }
+
+  // After a tap the card can change height (it grows when it turns to "Unlocked"), so keep it fully in view.
+  function revealCard(card) {
+    const l = mapList.getBoundingClientRect(), c = card.getBoundingClientRect();
+    if (c.bottom > l.bottom - 10) mapList.scrollTop += c.bottom - (l.bottom - 10);   // 10px and 6px are the list's own padding
+    else if (c.top < l.top + 6) mapList.scrollTop -= l.top + 6 - c.top;
+  }
+
+  // With more maps than fit on screen, open the list with the selected one in view (does nothing if it all fits).
+  function scrollPickedIntoView() {
+    const card = mapList.querySelector('.mapcard.picked');
+    if (!card) return;
+    const l = mapList.getBoundingClientRect(), c = card.getBoundingClientRect();
+    mapList.scrollTop += (c.top + c.height / 2) - (l.top + l.height / 2);
   }
 
   function playPicked() {
@@ -1440,9 +1586,11 @@
       applyTheme(m);
       refreshMapCards();
       mapMsg.textContent = m.name + ' selected.';
+      revealCard(card);
       return;
     }
     buyTap(m, card, mapMsg, refreshMapCards, (item) => { pickMap = item; applyTheme(item); });   // a new map is selected right away
+    revealCard(card);
   });
   mapPlay.addEventListener('click', playPicked);
   mapBack.addEventListener('click', backFromMaps);
@@ -1639,6 +1787,16 @@
     setSound.classList.toggle('on', soundOn);
     setSoundLbl.textContent = soundOn ? 'On' : 'Off';
     setSoundDesc.textContent = ytInPlayables() && !ytAudioEnabled ? 'Muted by YouTube right now' : 'Music and sound effects';
+    syncMusicUi();
+  }
+
+  // The Music switch follows the Sound switch: with Sound off there is nothing to hear, so it is greyed out.
+  function syncMusicUi() {
+    setMusic.setAttribute('aria-checked', musicOn ? 'true' : 'false');
+    setMusic.classList.toggle('on', musicOn);
+    setMusic.disabled = !soundOn;
+    setMusicLbl.textContent = musicOn ? 'On' : 'Off';
+    setMusicDesc.textContent = soundOn ? 'Turn off to keep sound effects only' : 'Turn Sound on to hear music';
   }
 
   // One switch for the pause menu and the Settings screen.
@@ -1654,6 +1812,23 @@
       else pauseMusic();
     } else {
       pauseMusic();
+    }
+  }
+
+  // Mutes or restores the music only. Sound effects are not touched, so a short blip confirms they still play.
+  function toggleMusic() {
+    if (!soundOn) return;
+    musicOn = !musicOn;
+    store.set('flipside-music', musicOn ? 'on' : 'off');
+    syncMusicUi();
+    if (musicOn) {
+      ensureMusic();
+      beep(520, 780, 0.08, 'square', 0.055);
+      if (state === 'playing') startMusic();
+      else pauseMusic();
+    } else {
+      pauseMusic();
+      beep(780, 520, 0.08, 'square', 0.055);
     }
   }
 
@@ -1693,6 +1868,7 @@
   spriteBack.addEventListener('click', backToHome);
   setBack.addEventListener('click', backToHome);
   setSound.addEventListener('click', toggleSound);
+  setMusic.addEventListener('click', toggleMusic);
 
   initWallet();
 
@@ -1906,7 +2082,7 @@
   }
 
   function startMusic() {
-    if (!soundOn || (ytInPlayables() && !ytAudioEnabled)) return;
+    if (!soundOn || !musicOn || (ytInPlayables() && !ytAudioEnabled)) return;
 
     const a = audio();
     if (a && a.state === 'suspended') {
@@ -2461,6 +2637,46 @@
     }
   }
 
+  // Distant volcanoes for the Magma map: dark cones with a glowing crater, one row on the ceiling and one on the
+  // floor (the corridor is symmetric, like the skyline). Deterministic, so the same silhouettes scroll past.
+  function drawVolcanoes() {
+    const th = T, span = W + 520, wK = Math.max(0.8, K);
+    for (let i = 0; i < 5; i++) {
+      const seed = i * 67 + 23;
+      const bw = (170 + (seed % 90)) * wK;
+      const bh = 70 + ((seed * 5) % Math.max(40, CORR * 0.3));
+      const x = ((((i * span) / 5 - world * 0.05) % span) + span) % span - 260;
+      const d = i % 2 === 0 ? 1 : -1;                  // 1 = hangs from the ceiling, -1 = rises from the floor
+      const y0 = d === 1 ? TOP : BOT, tw = bw * 0.2, sx = x + (bw - tw) / 2, sy = y0 + d * bh;
+      ctx.fillStyle = th.mountFar;
+      ctx.beginPath();
+      ctx.moveTo(x, y0); ctx.lineTo(sx, sy); ctx.lineTo(sx + tw, sy); ctx.lineTo(x + bw, y0);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = th.craterGlow;                   // a glowing summit, and a thin lava flow down one side
+      ctx.fillRect(sx, d === 1 ? sy - 5 : sy, tw, 5);
+      ctx.strokeStyle = th.craterGlow;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx + tw * 0.2, sy);
+      ctx.lineTo(sx + (x - sx) * 0.3 + tw * 0.2, sy + (y0 - sy) * 0.42);
+      ctx.stroke();
+    }
+  }
+
+  // A few embers drifting up and back through the corridor. Positions come from the scroll, so nothing is random.
+  function drawEmbers() {
+    const span = W + 80;
+    ctx.fillStyle = T.ember;
+    for (let i = 0; i < 16; i++) {
+      const x = ((((i * 137) % span) - world * (0.18 + (i % 4) * 0.05)) % span + span) % span - 20;
+      const y = BOT - ((world * (0.22 + (i % 3) * 0.08) + i * 61) % CORR);
+      ctx.globalAlpha = 0.25 + 0.1 * ((i * 7) % 5);
+      const sz = 2 + (i % 3);
+      ctx.fillRect(x, y, sz, sz);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function drawBackdrop() {
     if (currentMap.style === 'city') {
       drawSkyline();
@@ -2472,6 +2688,7 @@
         const y = TOP + 60 + ((i * 131) % Math.max(40, CORR - 160));
         circle(x, y, 110 + ((i * 47) % 60));
       }
+      if (currentMap.style === 'lava') drawVolcanoes();
     }
     if (lite) return;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
@@ -2482,6 +2699,7 @@
       const shift = (row % 2) * gs / 2;
       for (let x = -off - shift; x < W + gs; x += gs) circle(x, y, 2.6);
     }
+    if (currentMap.style === 'lava') drawEmbers();
   }
 
   function drawObstacles() {
