@@ -770,6 +770,7 @@
   const GLACIER_PRICE = 100000;
   const TESLA_PRICE = 120000;
   const OCEAN_PRICE = 130000;
+  const LIGHTHOUSE_PRICE = 1000;
 
   // Mix two #rrggbb colours; t is the share of a.
   const mixHex = (a, b, t) => {
@@ -868,6 +869,16 @@
           { base: '#4FD3C4', shade: '#2B9C8F', light: '#B4F3EA' }
         ],
         polyp: '#FFF6DE', bubble: 'rgba(216,248,255,0.9)', ray: 'rgba(190,240,255,0.09)', sandFar: 'rgba(18,80,96,0.3)'
+      }
+    },
+    {
+      id: 'lighthouse', name: 'Lighthouse', price: LIGHTHOUSE_PRICE, style: 'lighthouse',
+      blurb: 'Beacons sweeping a moonlit coast.',
+      theme: {
+        ink: '#0A1B33', deep: '#040B18', hill: 'rgba(110,145,195,0.14)', pshadow: 'rgba(4,10,20,0.72)', scrim: 'rgba(10,27,51,0.62)',
+        tower: '#E8E1CE', towerShade: '#9C9480', towerLight: '#FFFBF0', band: '#262A34',
+        rail: '#3A3F4A', glass: '#FFD27A', glassCore: '#FFF3C4', roof: '#3E4756', roofShade: '#242A33',
+        beam: '#FFE9A8', beamCore: '#FFF7DD', star: '#EAF2FF', mist: '#B9C9DE', islandFar: 'rgba(6,14,26,0.6)'
       }
     }
   ];
@@ -1436,6 +1447,48 @@
     return { kind: 'coral', outline: Lp.concat(Rp.slice().reverse()), dark, light, variant, polyps, extent };
   }
 
+  // Lighthouse: a tapering stone shaft, a railed gallery walkway, a glazed lamp room with a bright lit core, then a
+  // conical roof and a small finial ball on top. Every width is a function of height (like the tower and pipe), so
+  // the silhouette is one solid stretch per row and the painting and the collision test both come from it. The
+  // sweeping beam is drawn live over the top (see drawLighthouseBeam) and never changes the hitbox.
+  function lookLighthouse(w, h, rng) {
+    const R = (a, b) => a + rng() * (b - a);
+    const cx = w / 2;
+    const galleryH = clamp(h * 0.022, 2, 6);
+    const lampH = clamp(h * R(0.12, 0.16), 14, 42);
+    const capH = clamp(h * R(0.09, 0.12), 9, 24);
+    const finialH = clamp(capH * 0.3, 3, 8);
+    const bodyH = Math.max(20, h - galleryH - lampH - capH - finialH);
+    const baseHW = clamp(cx * R(0.62, 0.78), 7, cx);
+    const shaftTopHW = baseHW * R(0.58, 0.74);
+    const galleryHW = clamp(shaftTopHW * R(1.3, 1.5), shaftTopHW + 2, cx);
+    const lampHW = clamp(galleryHW * R(0.74, 0.86), Math.min(shaftTopHW * 0.94, galleryHW - 1), galleryHW - 1);
+    const finialR = clamp(Math.min(w, h) * 0.024, 1.2, 3.4);
+    const shaftHW = (t) => lerp(baseHW, shaftTopHW, clamp(t / bodyH, 0, 1));
+    const bandY = R(0.32, 0.56) * bodyH, bandH = clamp(h * 0.026, 3, 9);
+    // a few lit portholes up the shaft, decided once here so painting is just circles
+    const nw = clamp(Math.round(bodyH / 78), 1, 4);
+    const windows = [];
+    for (let i = 0; i < nw; i++) {
+      const t = (i + 0.65) * (bodyH / (nw + 0.3));
+      const hwt = shaftHW(t);
+      windows.push({ u: R(-0.32, 0.32) * hwt, t, r: clamp(hwt * 0.22, 1.6, 4), warm: rng() < 0.76 });
+    }
+    const galleryY1 = bodyH + galleryH, lampY1 = galleryY1 + lampH, capY1 = lampY1 + capH;
+    const extent = (t) => {
+      if (t <= bodyH) { const hw = shaftHW(t); return [cx - hw, cx + hw]; }
+      if (t <= galleryY1) return [cx - galleryHW, cx + galleryHW];
+      if (t <= lampY1) return [cx - lampHW, cx + lampHW];
+      if (t <= capY1) { const f = (t - lampY1) / capH; const hw = lerp(lampHW, finialR, f); return [cx - hw, cx + hw]; }
+      return [cx - finialR, cx + finialR];
+    };
+    return {
+      kind: 'lighthouse', cx, bodyH, galleryH, lampH, capH, finialH, baseHW, shaftTopHW, galleryHW, lampHW, finialR,
+      bandY, bandH, windows, shaftHW, galleryY1, lampY1, capY1, lampMid: (galleryY1 + lampY1) / 2,
+      extent, seed: Math.floor(rng() * 1e6)
+    };
+  }
+
   const LOOKS = {
     forest: (w, h, rng, kind) => ((kind || (rng() < 0.62 ? 'pine' : 'oak')) === 'pine' ? lookPine(w, h, rng) : lookOak(w, h, rng)),
     rocky: (w, h, rng) => lookRock(w, h, rng),
@@ -1447,7 +1500,8 @@
     ocean: (w, h, rng, kind) => {
       const pick = kind === 'pine' ? 'kelp' : kind === 'oak' ? 'coral' : (rng() < 0.5 ? 'kelp' : 'coral');
       return pick === 'kelp' ? lookKelp(w, h, rng) : lookCoral(w, h, rng);
-    }
+    },
+    lighthouse: (w, h, rng) => lookLighthouse(w, h, rng)
   };
 
   // Turn a silhouette into thin slices the collision test can walk through quickly.
@@ -1788,7 +1842,76 @@
     g.restore();
   }
 
-  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe, lava: paintLava, ice: paintIce, coil: paintCoil, kelp: paintKelp, coral: paintCoral };
+  function paintLighthouse(g, o, P, th, flat) {
+    const L = o.look, cx = L.cx;
+    // the tapering stone shaft
+    fillPoly(g, P, [[cx - L.baseHW, 0], [cx + L.baseHW, 0], [cx + L.shaftTopHW, L.bodyH], [cx - L.shaftTopHW, L.bodyH]], flat ? th.shadowSolid : th.tower);
+    if (!flat) {
+      fillPoly(g, P, [[cx, 0], [cx + L.baseHW, 0], [cx + L.shaftTopHW, L.bodyH], [cx, L.bodyH]], th.towerShade);
+      fillPoly(g, P, [[cx - L.baseHW, 0], [cx - L.baseHW * 0.72, 0], [cx - L.shaftTopHW * 0.72, L.bodyH], [cx - L.shaftTopHW, L.bodyH]], th.towerLight);
+      // a dark trim band partway up
+      const bw0 = L.shaftHW(L.bandY), bw1 = L.shaftHW(L.bandY + L.bandH);
+      fillPoly(g, P, [[cx - bw0, L.bandY], [cx + bw0, L.bandY], [cx + bw1, L.bandY + L.bandH], [cx - bw1, L.bandY + L.bandH]], th.band);
+      // a few lit portholes up the shaft
+      for (const wnd of L.windows) {
+        const c = P(cx + wnd.u, wnd.t);
+        g.fillStyle = wnd.warm ? th.glassCore : th.band;
+        g.globalAlpha = wnd.warm ? 0.95 : 0.6;
+        g.beginPath(); g.arc(c[0], c[1], wnd.r, 0, Math.PI * 2); g.fill();
+      }
+      g.globalAlpha = 1;
+    }
+    // the railed gallery walkway, wider than the shaft it sits on
+    const gY0 = L.bodyH, gY1 = L.galleryY1;
+    fillPoly(g, P, [[cx - L.galleryHW, gY0], [cx + L.galleryHW, gY0], [cx + L.galleryHW, gY1], [cx - L.galleryHW, gY1]], flat ? th.shadowSolid : th.rail);
+    if (!flat) {
+      g.strokeStyle = th.roofShade;
+      g.lineWidth = 1;
+      g.globalAlpha = 0.8;
+      g.beginPath();
+      for (let k = -3; k <= 3; k++) {
+        const rx = cx + k * (L.galleryHW * 0.4);
+        if (Math.abs(rx - cx) > L.galleryHW - 1) continue;
+        const a = P(rx, gY0), b = P(rx, gY1);
+        g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]);
+      }
+      g.stroke();
+      g.globalAlpha = 1;
+    }
+    // the glazed lamp room, with a bright core where the lamp mechanism sits
+    const lY0 = gY1, lY1 = L.lampY1;
+    fillPoly(g, P, [[cx - L.lampHW, lY0], [cx + L.lampHW, lY0], [cx + L.lampHW, lY1], [cx - L.lampHW, lY1]], flat ? th.shadowSolid : th.rail);
+    if (!flat) {
+      fillPoly(g, P, [[cx - L.lampHW * 0.82, lY0 + 1.5], [cx + L.lampHW * 0.82, lY0 + 1.5], [cx + L.lampHW * 0.82, lY1 - 1.5], [cx - L.lampHW * 0.82, lY1 - 1.5]], th.glass);
+      g.strokeStyle = th.rail;
+      g.lineWidth = 1.3;
+      g.beginPath();
+      for (let k = -1; k <= 1; k++) {
+        const rx = cx + k * L.lampHW * 0.55;
+        const a = P(rx, lY0), b = P(rx, lY1);
+        g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]);
+      }
+      g.stroke();
+      const c = P(cx, (lY0 + lY1) / 2);
+      g.fillStyle = th.glassCore;
+      g.beginPath(); g.arc(c[0], c[1], Math.max(2, L.lampHW * 0.42), 0, Math.PI * 2); g.fill();
+    }
+    // the conical roof
+    const rY0 = lY1, rY1 = L.capY1;
+    fillPoly(g, P, [[cx - L.lampHW, rY0], [cx + L.lampHW, rY0], [cx + L.finialR, rY1], [cx - L.finialR, rY1]], flat ? th.shadowSolid : th.roof);
+    if (!flat) fillPoly(g, P, [[cx, rY0], [cx + L.lampHW, rY0], [cx + L.finialR, rY1], [cx, rY1]], th.roofShade);
+    // the finial rod and ball
+    fillPoly(g, P, [[cx - L.finialR, rY1], [cx + L.finialR, rY1], [cx + L.finialR, o.h], [cx - L.finialR, o.h]], flat ? th.shadowSolid : th.roofShade);
+    if (!flat) {
+      const tip = P(cx, o.h - L.finialR * 0.4);
+      g.fillStyle = th.roofShade;
+      g.beginPath(); g.arc(tip[0], tip[1], L.finialR, 0, Math.PI * 2); g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.5)';
+      g.beginPath(); g.arc(tip[0] - L.finialR * 0.3, tip[1] - L.finialR * 0.3, Math.max(0.6, L.finialR * 0.35), 0, Math.PI * 2); g.fill();
+    }
+  }
+
+  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe, lava: paintLava, ice: paintIce, coil: paintCoil, kelp: paintKelp, coral: paintCoral, lighthouse: paintLighthouse };
 
   // Same hard drop shadow the original blocks have, then the shape itself.
   function paintObstacle(g, o, top, bot, th) {
@@ -1843,6 +1966,16 @@
         g.lineTo(bx - 15 * sx, by + dir * (L.br + 30));
         g.strokeStyle = th.arc; g.lineWidth = 5; g.globalAlpha = 0.3; g.stroke();
         g.strokeStyle = th.arcCore; g.lineWidth = 1.8; g.globalAlpha = 1; g.stroke();
+      });
+    } else if (m.style === 'lighthouse') {              // a soft static sweep from each lamp, so the preview reads as a beacon
+      items.forEach((o) => {
+        const L = o.look, by = o.side === 'floor' ? bot - L.lampMid : top + L.lampMid, bx = o.x + L.cx;
+        g.fillStyle = th.beam;
+        g.globalAlpha = 0.18;
+        g.beginPath();
+        g.moveTo(bx, by); g.lineTo(bx + 130, by - 26); g.lineTo(bx + 130, by + 26);
+        g.closePath(); g.fill();
+        g.globalAlpha = 1;
       });
     }
     g.fillStyle = th.deep;
@@ -3329,6 +3462,31 @@
     }
   }
 
+  // Distant islets for the Lighthouse map: low dark humps breaking the horizon with a faint moonlit rim, one row
+  // on the ceiling and one on the floor (the corridor is symmetric, like the skyline and the reef). Deterministic,
+  // so the same shapes scroll past every time.
+  function drawIslands() {
+    const th = T, span = W + 480, wK = Math.max(0.8, K);
+    for (let i = 0; i < 5; i++) {
+      const seed = i * 59 + 13;
+      const bw = (140 + (seed % 90)) * wK;
+      const bh = 34 + ((seed * 5) % Math.max(24, CORR * 0.16));
+      const x = ((((i * span) / 5 - world * 0.05) % span) + span) % span - 240;
+      const d = i % 2 === 0 ? 1 : -1;                  // 1 = hangs from the ceiling, -1 = rises from the floor
+      const y0 = d === 1 ? TOP : BOT, cxp = x + bw * (0.4 + (seed % 20) / 100), yp = y0 + d * bh;
+      ctx.fillStyle = th.islandFar;
+      ctx.beginPath();
+      ctx.moveTo(x, y0);
+      ctx.quadraticCurveTo(cxp, yp, x + bw, y0);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = th.hill;
+      ctx.beginPath();
+      ctx.moveTo(x + bw * 0.18, y0);
+      ctx.quadraticCurveTo(cxp, yp + d * 5, x + bw * 0.46, y0);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
   // Bubbles rising through the whole corridor, giving the Ocean map its underwater feel even far from the sprite.
   // Positions come from the scroll and the clock (like the snow), so nothing is random and nothing is allocated
   // per frame. Fewer bubbles in low-power mode, and they hold still with reduced motion.
@@ -3345,6 +3503,44 @@
         const y = BOT - ((((i * 71) + (reduce ? 0 : clock * rise)) % CORR) + CORR) % CORR;
         ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
       }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Stars scattered through the whole corridor for the Lighthouse map: fixed points that twinkle smoothly (a sine,
+  // never a strobe) and drift back with the scroll, far slower than anything in the foreground (like the distant
+  // hill blobs). Nothing is random and nothing is allocated per frame. Fewer stars in low-power mode, and they
+  // hold still with reduced motion.
+  function drawStars() {
+    const n = lite ? 18 : 46, span = W + 40;
+    for (let i = 0; i < n; i++) {
+      const x = ((((i * 101) % span) - world * (0.05 + (i % 5) * 0.015)) % span + span) % span - 20;
+      const y = TOP + ((i * 67) % Math.max(1, CORR));
+      const tw = reduce ? 0.7 : 0.45 + 0.55 * Math.sin(clock * (1.4 + (i % 4) * 0.5) + i * 2.3);
+      ctx.globalAlpha = 0.25 + 0.6 * tw;
+      ctx.fillStyle = T.star;
+      const sz = 1 + (i % 3) * 0.7;
+      ctx.fillRect(x, y, sz, sz);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Soft mist banks drifting through the corridor for the Lighthouse map: a handful of low-alpha wisps that sway
+  // sideways and hold still with reduced motion. Purely decorative and layered thin, so it reads as haze rather
+  // than fog blotting out the obstacles. Skipped entirely in low-power mode, like the ocean's caustics.
+  function drawMist() {
+    if (lite) return;
+    const n = 6, span = W + 300;
+    ctx.fillStyle = T.mist;
+    for (let i = 0; i < n; i++) {
+      const x = ((((i * span) / n - world * (0.1 + (i % 3) * 0.03)) % span) + span) % span - 150;
+      const y = TOP + 40 + ((i * 97) % Math.max(40, CORR - 80));
+      const rw = 130 + (i % 3) * 40, rh = 22 + (i % 2) * 10;
+      const drift = reduce ? 0 : Math.sin(clock * 0.35 + i * 1.9) * 14;
+      ctx.globalAlpha = 0.05 + 0.02 * (i % 3);
+      ctx.beginPath();
+      ctx.ellipse(x + drift, y, rw, rh, 0, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -3456,6 +3652,43 @@
     }
   }
 
+  // Rotating light for the Lighthouse map, drawn over the cached tower sprites: a slow sweeping beam from each lamp
+  // room, plus a soft halo. The sweep is decoration only, never the hitbox (that's the tower's own silhouette).
+  // With reduced motion the beam holds at a fixed heading instead of turning, so the lamp still reads as lit; the
+  // full sweep still passes behind the corridor walls at some angles, same as any obstacle would. Low-power mode
+  // skips the second, brighter layer of the halo and beam.
+  function drawLighthouseBeam() {
+    const period = 5.2, len = Math.hypot(W, CORR) * 0.55;
+    for (const o of obstacles) {
+      const L = o.look;
+      if (!L || L.kind !== 'lighthouse' || o.x > W + 200 || o.x + o.w < -200) continue;
+      const fl = o.side === 'floor';
+      const Y = (t) => (fl ? BOT - t : TOP + t);              // height above the wall -> screen y
+      const bx = o.x + L.cx, by = Y(L.lampMid);
+      const phase = (L.seed % 1000) * 0.00628;
+      const ang = reduce ? phase : (clock * (Math.PI * 2 / period) + phase) % (Math.PI * 2);
+      ctx.fillStyle = T.beamCore;
+      ctx.globalAlpha = 0.14; circle(bx, by, L.lampHW * 2.8);
+      if (!lite) { ctx.globalAlpha = 0.08; circle(bx, by, L.lampHW * 4.6); }
+      const wedge = (a, spread) => {
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + Math.cos(a - spread) * len, by + Math.sin(a - spread) * len);
+        ctx.lineTo(bx + Math.cos(a + spread) * len, by + Math.sin(a + spread) * len);
+        ctx.closePath(); ctx.fill();
+      };
+      ctx.fillStyle = T.beam;
+      ctx.globalAlpha = 0.09;
+      wedge(ang, 0.2); wedge(ang + Math.PI, 0.2);
+      if (!lite) {
+        ctx.fillStyle = T.beamCore;
+        ctx.globalAlpha = 0.15;
+        wedge(ang, 0.05); wedge(ang + Math.PI, 0.05);
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
   // The Tesla sky. A thin charged rail runs along each wall with pulses of current riding it (they scroll with the
   // world), and every few seconds a dim forked bolt flickers out from one wall with the faintest brightening of the
   // sky. Two quick flickers about every 3.4 s is far under the three-flashes-a-second limit for photosensitive
@@ -3534,10 +3767,12 @@
       else if (currentMap.style === 'ice') drawPeaks();
       else if (currentMap.style === 'coil') drawStorm();
       else if (currentMap.style === 'ocean') drawReef();
+      else if (currentMap.style === 'lighthouse') drawIslands();
     }
     if (currentMap.style === 'ice') drawSnow();
     else if (currentMap.style === 'coil') drawSparks();
     else if (currentMap.style === 'ocean') { drawCaustics(); drawOceanBubbles(); }
+    else if (currentMap.style === 'lighthouse') { drawStars(); drawMist(); }
     if (lite) return;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     const gs = 44;
@@ -3874,6 +4109,7 @@
     drawSpeedLines();
     drawObstacles();
     if (currentMap.style === 'coil') drawCoilFx();
+    else if (currentMap.style === 'lighthouse') drawLighthouseBeam();
     drawOrbs();
     drawWalls();
     drawTrail();
