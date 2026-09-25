@@ -114,12 +114,6 @@
     .boostbtn .ico { width: 52%; height: 52%; }
   }
 
-  @media (max-width: 600px) {
-  .boostbtn {
-    transform: translateY(8px);
-  }
-}
-
   .overlay {
     position: absolute;
     inset: 0;
@@ -769,6 +763,7 @@
   const LAVA_PRICE = 60000;
   const GLACIER_PRICE = 80000;
   const TESLA_PRICE = 100000;
+  const OCEAN_PRICE = 100;
 
   // Mix two #rrggbb colours; t is the share of a.
   const mixHex = (a, b, t) => {
@@ -852,6 +847,21 @@
         coilBody: '#4D5AA8', coilLight: '#A9B6F2', coilShade: '#1D2558', coilMetal: '#3A4690',
         chrome: '#E4EAFF', chromeShade: '#8B96CF', copper: '#E8A04A',
         arc: '#7DF9FF', arcCore: '#F2FDFF', violet: '#B48CFF'
+      }
+    },
+    {
+      id: 'ocean', name: 'Ocean', price: OCEAN_PRICE, style: 'ocean',
+      blurb: 'Kelp forests and coral in the deep blue.',
+      theme: {
+        ink: '#0B4A6B', deep: '#052537', hill: 'rgba(8,58,80,0.34)', pshadow: 'rgba(4,26,38,0.7)', scrim: 'rgba(7,46,64,0.62)',
+        weed: '#2FA27A', weedShade: '#1B6B52', weedLight: '#8CE9C0', stem: '#1F5B46',
+        coralPalette: [
+          { base: '#FF6F91', shade: '#C94A6C', light: '#FFC2D4' },
+          { base: '#FF9F45', shade: '#D97328', light: '#FFD9A8' },
+          { base: '#9B87FF', shade: '#6B57D6', light: '#D6CCFF' },
+          { base: '#4FD3C4', shade: '#2B9C8F', light: '#B4F3EA' }
+        ],
+        polyp: '#FFF6DE', bubble: 'rgba(216,248,255,0.9)', ray: 'rgba(190,240,255,0.09)', sandFar: 'rgba(18,80,96,0.3)'
       }
     }
   ];
@@ -1329,6 +1339,97 @@
     };
   }
 
+  // Ocean: a swaying kelp/seaweed cluster, built from a few tapering blades that each wander side to side as they
+  // rise (a fixed S-curve, not animated, so the silhouette never disagrees with the hitbox). Every blade shares the
+  // same base and the extent at a height is just the widest/narrowest edge across whichever blades reach that high.
+  function lookKelp(w, h, rng) {
+    const R = (a, b) => a + rng() * (b - a);
+    const cx = w / 2;
+    const nB = clamp(Math.round(w / 15) + 1, 2, 4);
+    const blades = [];
+    for (let i = 0; i < nB; i++) {
+      const spread = nB > 1 ? (i / (nB - 1) - 0.5) * w * R(0.5, 0.8) : 0;
+      blades.push({
+        bx: cx + spread,
+        bh: h * R(0.68, 1.0),
+        baseW: clamp(w * R(0.1, 0.16), 3, 9),
+        amp: R(5, 12) * clamp(w / 34, 0.5, 1.7),
+        freq: R(1.3, 2.1),
+        phase: R(0, 6.28)
+      });
+    }
+    blades.sort((a, b) => b.bh - a.bh);
+    const bladeAt = (b, t) => {
+      const f = clamp(t / b.bh, 0, 1);
+      const lean = b.amp * Math.sin(f * Math.PI * b.freq + b.phase) * f;
+      const hw = Math.max(0.8, b.baseW * (1 - f * 0.92));
+      const c = b.bx + lean;
+      return [c - hw, c + hw];
+    };
+    const extent = (t) => {
+      let lo = Infinity, hi = -Infinity;
+      for (const b of blades) {
+        if (t > b.bh) continue;
+        const [l, r] = bladeAt(b, t);
+        if (l < lo) lo = l;
+        if (r > hi) hi = r;
+      }
+      if (lo === Infinity) return [cx, cx];
+      return [clamp(lo, 0, w), clamp(hi, 0, w)];
+    };
+    return { kind: 'kelp', cx, blades, bladeAt, extent };
+  }
+
+  // Ocean: a chunky reef mound built the same way as a rock (a broken outline sampled top to bottom), but rounder
+  // and bumpier, in one of a handful of bright coral colours, with a scatter of small polyp dots for texture.
+  function lookCoral(w, h, rng) {
+    const R = (a, b) => a + rng() * (b - a);
+    const nV = clamp(Math.round(h / 28) + 4, 6, 14);
+    const taper = R(0.3, 0.58), pw = R(0.9, 1.5), lean = R(-0.1, 0.1);
+    const bumps = [];
+    const nb = 2 + Math.floor(rng() * 3);
+    for (let i = 0; i < nb; i++) bumps.push({ s0: R(0.15, 0.85), sg: R(0.09, 0.18), amp: R(0.24, 0.46) });
+    const ss = [0];
+    for (let j = 1; j < nV - 1; j++) ss.push(clamp(j / (nV - 1) + R(-0.3, 0.3) / (nV - 1), 0.02, 0.98));
+    ss.push(1);
+    ss.sort((a, b) => a - b);
+    const Lp = [], Rp = [];
+    for (let j = 0; j < nV; j++) {
+      const s = ss[j];
+      let hw = 0.5 * (1 - taper * Math.pow(s, pw));
+      for (const b of bumps) hw += b.amp * 0.5 * Math.exp(-Math.pow((s - b.s0) / b.sg, 2));
+      const c = 0.5 + lean * s;
+      let hl = hw * (1 + (j === 0 ? 0 : R(-0.14, 0.14)));
+      let hr = hw * (1 + (j === 0 ? 0 : R(-0.14, 0.14)));
+      if (j === nV - 1) { hl = R(0.08, 0.16); hr = R(0.08, 0.16); }
+      Lp.push([clamp((c - hl) * w, 0, w), s * h]);
+      Rp.push([clamp((c + hr) * w, 0, w), s * h]);
+    }
+    const at = (P, t) => {
+      if (t <= P[0][1]) return P[0][0];
+      for (let i = 1; i < P.length; i++) {
+        if (t <= P[i][1]) {
+          const a = P[i - 1], b = P[i];
+          return a[0] + (b[0] - a[0]) * ((t - a[1]) / Math.max(1e-6, b[1] - a[1]));
+        }
+      }
+      return P[P.length - 1][0];
+    };
+    const extent = (t) => [at(Lp, t), at(Rp, t)];
+    const ridge = [0, 0.32, 0.64, 1].map((s) => [clamp((0.5 + lean * s + R(-0.08, 0.08)) * w, 0, w), s * h]);
+    const dark = ridge.concat([[w + 30, h], [w + 30, 0]]);
+    const light = [[-30, h * 0.3]].concat(ridge.slice(1).map(([u, t]) => [u - w * 0.16, t]), [[-30, h]]);
+    const variant = Math.floor(rng() * 4);
+    const polyps = [];
+    const np = clamp(Math.round(h / 26), 3, 9);
+    for (let i = 0; i < np; i++) {
+      const t = R(h * 0.08, h * 0.94), e = extent(t), sp = e[1] - e[0];
+      if (sp < 4) continue;
+      polyps.push({ u: e[0] + R(0.2, 0.8) * sp, t, r: R(1.1, 2.4) });
+    }
+    return { kind: 'coral', outline: Lp.concat(Rp.slice().reverse()), dark, light, variant, polyps, extent };
+  }
+
   const LOOKS = {
     forest: (w, h, rng, kind) => ((kind || (rng() < 0.62 ? 'pine' : 'oak')) === 'pine' ? lookPine(w, h, rng) : lookOak(w, h, rng)),
     rocky: (w, h, rng) => lookRock(w, h, rng),
@@ -1336,7 +1437,11 @@
     dawn: (w, h, rng) => lookPipe(w, h, rng),
     lava: (w, h, rng) => lookLava(w, h, rng),
     ice: (w, h, rng) => lookIce(w, h, rng),
-    coil: (w, h, rng) => lookCoil(w, h, rng)
+    coil: (w, h, rng) => lookCoil(w, h, rng),
+    ocean: (w, h, rng, kind) => {
+      const pick = kind === 'pine' ? 'kelp' : kind === 'oak' ? 'coral' : (rng() < 0.5 ? 'kelp' : 'coral');
+      return pick === 'kelp' ? lookKelp(w, h, rng) : lookCoral(w, h, rng);
+    }
   };
 
   // Turn a silhouette into thin slices the collision test can walk through quickly.
@@ -1619,7 +1724,65 @@
     g.strokeStyle = th.arc; g.globalAlpha = 0.9; g.lineWidth = 1.2; ring(L.ballMid, L.br, L.br); g.stroke(); g.globalAlpha = 1;
     g.restore();
   }
-  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe, lava: paintLava, ice: paintIce, coil: paintCoil };
+  function paintKelp(g, o, P, th, flat) {
+    const L = o.look;
+    for (const b of L.blades) {
+      const steps = 14;
+      const left = [], right = [];
+      for (let k = 0; k <= steps; k++) {
+        const t = (b.bh * k) / steps;
+        const [l, r] = L.bladeAt(b, t);
+        left.push([l, t]); right.push([r, t]);
+      }
+      const poly = left.concat(right.slice().reverse());
+      fillPoly(g, P, poly, flat ? th.shadowSolid : th.weed);
+      if (flat) continue;
+      g.save();
+      pathPoly(g, P, poly);
+      g.clip();
+      // a shaded stripe down the trailing side and a light streak down the leading side, so each blade reads as round
+      const shadeSide = [], lightSide = [];
+      for (let k = 0; k <= steps; k++) {
+        const t = (b.bh * k) / steps;
+        const [l, r] = L.bladeAt(b, t);
+        const mid = (l + r) / 2;
+        shadeSide.push([mid + (r - mid) * 0.35, t]);
+        lightSide.push([mid - (mid - l) * 0.35, t]);
+      }
+      fillPoly(g, P, right.concat(shadeSide.slice().reverse()), th.weedShade);
+      g.globalAlpha = 0.85;
+      fillPoly(g, P, left.concat(lightSide.slice().reverse()), th.weedLight);
+      g.globalAlpha = 1;
+      g.restore();
+    }
+    if (flat) return;
+    g.fillStyle = th.stem;
+    const bw = clamp(o.w * 0.1, 3, 8);
+    fillPoly(g, P, [[L.cx - bw, 0], [L.cx + bw, 0], [L.cx + bw * 0.6, 6], [L.cx - bw * 0.6, 6]], th.stem);
+  }
+
+  function paintCoral(g, o, P, th, flat) {
+    const L = o.look, pal = th.coralPalette[L.variant % th.coralPalette.length];
+    fillPoly(g, P, L.outline, flat ? th.shadowSolid : pal.base);
+    if (flat) return;
+    g.save();
+    pathPoly(g, P, L.outline);
+    g.clip();
+    fillPoly(g, P, L.dark, pal.shade);
+    g.globalAlpha = 0.55;
+    fillPoly(g, P, L.light, pal.light);
+    g.globalAlpha = 1;
+    g.fillStyle = th.polyp;
+    for (const q of L.polyps) {
+      const c = P(q.u, q.t);
+      g.globalAlpha = 0.85;
+      g.beginPath(); g.arc(c[0], c[1], q.r, 0, Math.PI * 2); g.fill();
+    }
+    g.globalAlpha = 1;
+    g.restore();
+  }
+
+  const PAINT = { pine: paintPine, oak: paintOak, rock: paintRock, tower: paintTower, pipe: paintPipe, lava: paintLava, ice: paintIce, coil: paintCoil, kelp: paintKelp, coral: paintCoral };
 
   // Same hard drop shadow the original blocks have, then the shape itself.
   function paintObstacle(g, o, top, bot, th) {
@@ -1710,10 +1873,10 @@
       '<span class="mapbar"><i></i></span><span class="mapprog"></span>';
     card.innerHTML = kind === 'map'
       ? '<canvas class="mapthumb" width="232" height="136" aria-hidden="true"></canvas>' +
-        '<span class="mapinfo"><span class="maphead"><span class="mapname">' + item.name + '</span><span class="mapstate"></span><span class="mapsel">Live</span></span>' + tail + '</span>'
+        '<span class="mapinfo"><span class="maphead"><span class="mapname">' + item.name + '</span><span class="mapstate"></span><span class="mapsel">Selected</span></span>' + tail + '</span>'
       : '<canvas class="spritethumb" width="176" height="128" aria-hidden="true"></canvas>' +
         '<span class="maphead"><span class="mapname">' + item.name + '</span></span>' +
-        '<span class="maphead"><span class="mapstate"></span><span class="mapsel">Live</span></span>' + tail;
+        '<span class="maphead"><span class="mapstate"></span><span class="mapsel">Selected</span></span>' + tail;
     card._r = {
       state: card.querySelector('.mapstate'), need: card.querySelector('.mapneed'), desc: card.querySelector('.mapdesc'),
       bar: card.querySelector('.mapbar'), fill: card.querySelector('.mapbar i'), prog: card.querySelector('.mapprog'), pill: '', label: ''
@@ -1877,7 +2040,7 @@
   // ---------- sprites: cosmetic player skins ----------
   // Price of each skin, in points. The first skin is the original look: free and always yours.
   // Skins only change how the player LOOKS. The hitbox and all gameplay stay exactly the same.
-  const SPRITE_PRICES = [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000];
+  const SPRITE_PRICES = [10000, 200, 300, 400, 500, 600, 700, 800, 900];
   const SPRITES = [
     { id: 'sunny', name: 'Sunny', price: 0, body: '#FFD23F', trail: '255,210,63', blurb: 'The original.', extra: null },
     { id: 'ember', name: 'Ember', price: SPRITE_PRICES[0], body: '#FF8A2B', hi: '#FFC38A', trail: '255,138,43', blurb: 'A little flame on top.', extra: 'flame' },
@@ -3135,6 +3298,67 @@
     }
   }
 
+  // Distant reef mounds for the Ocean map: rounded silhouettes with a lit crown, one row on the ceiling and one on
+  // the floor (the corridor is symmetric, like the skyline and the glacier peaks). Deterministic, so the same
+  // shapes scroll past.
+  function drawReef() {
+    const th = T, span = W + 480, wK = Math.max(0.8, K);
+    for (let i = 0; i < 5; i++) {
+      const seed = i * 53 + 11;
+      const bw = (150 + (seed % 90)) * wK;
+      const bh = 46 + ((seed * 5) % Math.max(30, CORR * 0.22));
+      const x = ((((i * span) / 5 - world * 0.05) % span) + span) % span - 240;
+      const d = i % 2 === 0 ? 1 : -1;                  // 1 = hangs from the ceiling, -1 = rises from the floor
+      const y0 = d === 1 ? TOP : BOT, cxp = x + bw * (0.4 + (seed % 20) / 100), yp = y0 + d * bh;
+      ctx.fillStyle = th.sandFar;
+      ctx.beginPath();
+      ctx.moveTo(x, y0);
+      ctx.quadraticCurveTo(cxp, yp, x + bw, y0);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = th.hill;
+      ctx.beginPath();
+      ctx.moveTo(x + bw * 0.14, y0);
+      ctx.quadraticCurveTo(cxp, yp + d * 6, x + bw * 0.42, y0);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // Bubbles rising through the whole corridor, giving the Ocean map its underwater feel even far from the sprite.
+  // Positions come from the scroll and the clock (like the snow), so nothing is random and nothing is allocated
+  // per frame. Fewer bubbles in low-power mode, and they hold still with reduced motion.
+  function drawOceanBubbles() {
+    const n = lite ? 14 : 34, span = W + 60;
+    ctx.fillStyle = T.bubble;
+    for (let pass = 0; pass < 2; pass++) {
+      ctx.globalAlpha = pass ? 0.85 : 0.4;
+      for (let i = pass; i < n; i += 2) {
+        const r = pass ? 1.8 + (i % 3) * 0.8 : 1 + (i % 3) * 0.5;
+        const sway = reduce ? 0 : Math.sin(clock * 1.4 + i * 1.7) * (3 + (i % 4));
+        const x = ((((i * 83) % span) - world * (0.12 + (i % 5) * 0.03) + sway) % span + span) % span - 30;
+        const rise = 24 + (i % 4) * 9;
+        const y = BOT - ((((i * 71) + (reduce ? 0 : clock * rise)) % CORR) + CORR) % CORR;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Faint shafts of light slanting down through the water on the Ocean map. Purely decorative and very subtle.
+  function drawCaustics() {
+    if (lite) return;
+    const span = W + 200;
+    ctx.fillStyle = T.ray;
+    for (let i = 0; i < 4; i++) {
+      const x = ((((i * span) / 4 - world * 0.15) % span) + span) % span - 60;
+      const rw = 46 + (i % 2) * 20;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(x, TOP); ctx.lineTo(x + rw, TOP); ctx.lineTo(x + rw * 0.4, BOT); ctx.lineTo(x - rw * 0.4, BOT);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
+
   // Snow drifting through the corridor: it falls and sways with the clock and slides back with the scroll. Nothing
   // is random and nothing is allocated per frame; two fills (far flakes, then near ones) draw all of it. Fewer
   // flakes in low-power mode, and it holds still if the player asked for reduced motion.
@@ -3303,9 +3527,11 @@
       if (currentMap.style === 'lava') drawVolcanoes();
       else if (currentMap.style === 'ice') drawPeaks();
       else if (currentMap.style === 'coil') drawStorm();
+      else if (currentMap.style === 'ocean') drawReef();
     }
     if (currentMap.style === 'ice') drawSnow();
     else if (currentMap.style === 'coil') drawSparks();
+    else if (currentMap.style === 'ocean') { drawCaustics(); drawOceanBubbles(); }
     if (lite) return;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     const gs = 44;
@@ -3405,6 +3631,26 @@
       ctx.fillStyle = trailColor(SP.trail, n, k);
       ctx.fillRect(PX + (S - s) / 2 - k * run.speed * 0.016, p.hist[k] + (S - s) / 2, s, s);
     }
+  }
+
+  // A handful of bubbles streaming off the sprite on the Ocean map: they start right behind it (using the same
+  // position history the trail uses) and drift upward as they age, fading out. Purely decorative, drawn behind the
+  // sprite, and never touches the hitbox.
+  function drawPlayerBubbles() {
+    if (currentMap.style !== 'ocean' || lite || state !== 'playing') return;
+    const n = 7, cx = PX + S / 2;
+    ctx.fillStyle = T.bubble;
+    for (let i = 0; i < n; i++) {
+      const age = ((reduce ? 0 : clock) * 0.7 + i / n) % 1;          // 0 = just born, 1 = about to be recycled
+      const hk = Math.min(p.hist.length - 1, 1 + Math.floor(age * 5));
+      const baseY = (p.hist[hk] != null ? p.hist[hk] : p.y) + S / 2;
+      const x = cx - S * 0.4 - age * S * 1.1 + (reduce ? 0 : Math.sin(clock * 3.2 + i * 2.1) * 2.5);
+      const y = baseY - age * CORR * 0.4;
+      const r = 1.2 + (i % 3) * 0.7;
+      ctx.globalAlpha = (1 - age) * 0.8;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
 
   function drawSpeedLines() {
