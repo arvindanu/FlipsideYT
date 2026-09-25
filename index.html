@@ -114,6 +114,12 @@
     .boostbtn .ico { width: 52%; height: 52%; }
   }
 
+  @media (max-width: 600px) {
+  .boostbtn {
+    transform: translateY(8px);
+  }
+}
+
   .overlay {
     position: absolute;
     inset: 0;
@@ -756,14 +762,14 @@
   // ---------- maps ----------
   // Prices, in points. Points come from your runs and are SPENT when you buy something.
   // The original map is free and always yours.
-  const FOREST_PRICE = 5000;
-  const ROCKY_PRICE = 10000;
-  const CITY_PRICE = 15000;
-  const DAWN_PRICE = 20000;
-  const LAVA_PRICE = 60000;
-  const GLACIER_PRICE = 80000;
-  const TESLA_PRICE = 100000;
-  const OCEAN_PRICE = 100;
+  const FOREST_PRICE = 10000;
+  const ROCKY_PRICE = 20000;
+  const CITY_PRICE = 35000;
+  const DAWN_PRICE = 60000;
+  const LAVA_PRICE = 85000;
+  const GLACIER_PRICE = 100000;
+  const TESLA_PRICE = 120000;
+  const OCEAN_PRICE = 130000;
 
   // Mix two #rrggbb colours; t is the share of a.
   const mixHex = (a, b, t) => {
@@ -1873,10 +1879,10 @@
       '<span class="mapbar"><i></i></span><span class="mapprog"></span>';
     card.innerHTML = kind === 'map'
       ? '<canvas class="mapthumb" width="232" height="136" aria-hidden="true"></canvas>' +
-        '<span class="mapinfo"><span class="maphead"><span class="mapname">' + item.name + '</span><span class="mapstate"></span><span class="mapsel">Selected</span></span>' + tail + '</span>'
+        '<span class="mapinfo"><span class="maphead"><span class="mapname">' + item.name + '</span><span class="mapstate"></span><span class="mapsel">Live</span></span>' + tail + '</span>'
       : '<canvas class="spritethumb" width="176" height="128" aria-hidden="true"></canvas>' +
         '<span class="maphead"><span class="mapname">' + item.name + '</span></span>' +
-        '<span class="maphead"><span class="mapstate"></span><span class="mapsel">Selected</span></span>' + tail;
+        '<span class="maphead"><span class="mapstate"></span><span class="mapsel">Live</span></span>' + tail;
     card._r = {
       state: card.querySelector('.mapstate'), need: card.querySelector('.mapneed'), desc: card.querySelector('.mapdesc'),
       bar: card.querySelector('.mapbar'), fill: card.querySelector('.mapbar i'), prog: card.querySelector('.mapprog'), pill: '', label: ''
@@ -2040,7 +2046,7 @@
   // ---------- sprites: cosmetic player skins ----------
   // Price of each skin, in points. The first skin is the original look: free and always yours.
   // Skins only change how the player LOOKS. The hitbox and all gameplay stay exactly the same.
-  const SPRITE_PRICES = [10000, 200, 300, 400, 500, 600, 700, 800, 900];
+  const SPRITE_PRICES = [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000];
   const SPRITES = [
     { id: 'sunny', name: 'Sunny', price: 0, body: '#FFD23F', trail: '255,210,63', blurb: 'The original.', extra: null },
     { id: 'ember', name: 'Ember', price: SPRITE_PRICES[0], body: '#FF8A2B', hi: '#FFC38A', trail: '255,138,43', blurb: 'A little flame on top.', extra: 'flame' },
